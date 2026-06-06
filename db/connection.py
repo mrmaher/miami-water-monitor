@@ -28,28 +28,49 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SQLITE_PATH  = PROJECT_ROOT / "water_monitor.db"
 
 # Read from env or Streamlit secrets (whichever is available)
+def _normalize_url(url: str) -> str:
+    """
+    Auto-convert a Supabase direct connection URL to the Session Pooler URL.
+    Streamlit Cloud runs on IPv4 — the direct host (db.xxx.supabase.co:5432)
+    is IPv6-only on free plans, so we must use the Session Pooler instead.
+
+    Direct:  postgresql://postgres:PWD@db.REF.supabase.co:5432/postgres
+    Pooler:  postgresql://postgres.REF:PWD@aws-0-us-east-1.pooler.supabase.com:6543/postgres
+    """
+    m = re.match(
+        r'postgresql://postgres:([^@]+)@db\.([^.]+)\.supabase\.co:5432/postgres',
+        url
+    )
+    if m:
+        password, project_ref = m.group(1), m.group(2)
+        return (
+            f"postgresql://postgres.{project_ref}:{password}"
+            f"@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+        )
+    return url
+
+
 def _get_database_url() -> str | None:
     # 1. Environment variable (GitHub Actions, local .env)
     url = os.environ.get("DATABASE_URL", "").strip()
     if url:
-        return url
+        return _normalize_url(url)
     # 2. Streamlit secrets (when running via streamlit)
     try:
         import streamlit as st
         url = st.secrets.get("DATABASE_URL", "").strip()
         if url:
-            return url
+            return _normalize_url(url)
     except Exception:
         pass
     # 3. Local .streamlit/secrets.toml parsed directly (non-Streamlit scripts)
     secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
     if secrets_path.exists():
         try:
-            import re
             text = secrets_path.read_text()
             m = re.search(r'DATABASE_URL\s*=\s*["\']([^"\']+)["\']', text)
             if m:
-                return m.group(1).strip()
+                return _normalize_url(m.group(1).strip())
         except Exception:
             pass
     return None
