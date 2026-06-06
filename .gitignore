@@ -1,0 +1,25 @@
+# Secrets — never commit these
+.streamlit/secrets.toml
+*.env
+.env
+
+# Database files (local dev only — production uses Supabase)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.Python
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

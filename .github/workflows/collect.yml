@@ -1,0 +1,50 @@
+name: Daily Water Quality Collection
+
+on:
+  schedule:
+    # 7:00 AM Eastern Time (noon UTC) every day
+    - cron: '0 12 * * *'
+  # Also allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run water quality collectors
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python run_collection.py
+        # run_collection.py exits 0 on success, 1 if any collector fails
+
+      - name: Report result
+        if: always()
+        run: |
+          echo "Collection run complete at $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+---
+# HOW TO SET THIS UP:
+#
+# 1. Go to your GitHub repo → Settings → Secrets and variables → Actions
+# 2. Click "New repository secret"
+# 3. Name:  DATABASE_URL
+#    Value: postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres
+#           (copy from Supabase dashboard → Settings → Database → URI)
+# 4. Save. The workflow will now run every morning at 7am ET automatically.
+#
+# You can also trigger it manually anytime from:
+# GitHub repo → Actions tab → "Daily Water Quality Collection" → "Run workflow"

@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Miami Water Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:          #0a0f1e;
+    --surface:     #111827;
+    --surface2:    #1a2235;
+    --border:      #1f2d44;
+    --text:        #e2e8f0;
+    --text-muted:  #64748b;
+    --text-dim:    #94a3b8;
+    --good:        #22c55e;
+    --good-bg:     rgba(34,197,94,.12);
+    --moderate:    #f59e0b;
+    --moderate-bg: rgba(245,158,11,.12);
+    --poor:        #ef4444;
+    --poor-bg:     rgba(239,68,68,.12);
+    --advisory:    #dc2626;
+    --advisory-bg: rgba(220,38,38,.15);
+    --unknown:     #475569;
+    --unknown-bg:  rgba(71,85,105,.12);
+    --accent:      #38bdf8;
+    --accent2:     #818cf8;
+    --tier1:       #34d399;
+    --tier2:       #a78bfa;
+    --radius:      10px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ── */
+  .app { max-width: 1400px; margin: 0 auto; padding: 0 20px 60px; }
+
+  /* ── Header ── */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0 18px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px; flex-wrap: wrap;
+  }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    width: 38px; height: 38px;
+    background: linear-gradient(135deg, #0ea5e9, #6366f1);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; flex-shrink: 0;
+  }
+  .title { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -.3px; }
+  .subtitle { font-size: 12px; color: var(--text-muted); }
+  .header-meta { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .meta-chip {
+    font-size: 11px; color: var(--text-muted);
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--good); animation: pulse 2s infinite;
+  }
+  .pulse.stale { background: var(--unknown); animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .btn-collect {
+    background: var(--accent); color: #0a0f1e;
+    border: none; border-radius: 7px; padding: 6px 14px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+    transition: opacity .15s;
+  }
+  .btn-collect:hover { opacity: .85; }
+  .btn-collect:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ── Advisory Banner ── */
+  .advisory-banner {
+    background: var(--advisory-bg);
+    border: 1px solid rgba(220,38,38,.4);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin: 18px 0 0;
+    display: none;
+  }
+  .advisory-banner.visible { display: block; }
+  .advisory-banner-header {
+    display: flex; align-items: center; gap: 8px;
+    color: #fca5a5; font-weight: 700; font-size: 13px; margin-bottom: 8px;
+  }
+  .advisory-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid rgba(220,38,38,.2);
+    font-size: 13px;
+  }
+  .advisory-site { font-weight: 600; color: #fca5a5; min-width: 180px; }
+  .advisory-desc { color: var(--text-dim); flex: 1; }
+  .advisory-meta { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+
+  /* ── Section headings ── */
+  .section { margin-top: 28px; }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px; gap: 12px;
+  }
+  .section-title {
+    font-size: 13px; font-weight: 700; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: .8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-title .count {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 20px; padding: 1px 8px;
+    font-size: 11px; font-weight: 500; color: var(--text-muted);
+    text-transform: none; letter-spacing: 0;
+  }
+  .filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .filter-btn {
+    font-size: 11px; padding: 4px 10px;
+    border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text-muted);
+    cursor: pointer; transition: all .15s;
+  }
+  .filter-btn.active, .filter-btn:hover {
+    border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,.08);
+  }
+
+  /* ── Site cards grid ── */
+  .site-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+  }
+  .site-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    cursor: pointer;
+    transition: border-color .2s, transform .1s;
+    position: relative;
+    overflow: hidden;
+  }
+  .site-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  }
+  .site-card.GOOD::before    { background: var(--good); }
+  .site-card.MODERATE::before { background: var(--moderate); }
+  .site-card.POOR::before    { background: var(--poor); }
+  .site-card.ADVISORY::before { background: var(--advisory); }
+  .site-card.UNKNOWN::before { background: var(--unknown); }
+  .site-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .site-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+  .site-card-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .site-card-name { font-size: 13px; font-weight: 600; color: var(--text); max-width: 150px; }
+  .site-type-badge {
+    font-size: 10px; padding: 2px 7px; border-radius: 20px;
+    background: var(--surface2); color: var(--text-muted);
+    border: 1px solid var(--border); white-space: nowrap;
+  }
+  .site-card-value {
+    margin-top: 12px;
+    font-size: 28px; font-weight: 700; letter-spacing: -.5px;
+    display: flex; align-items: baseline; gap: 4px;
+  }
+  .site-card-value .unit { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+  .site-card-value.GOOD    { color: var(--good); }
+  .site-card-value.MODERATE { color: var(--moderate); }
+  .site-card-value.POOR    { color: var(--poor); }
+  .site-card-value.ADVISORY { color: var(--advisory); }
+  .site-card-value.UNKNOWN { color: var(--unknown); }
+
+  .site-card-status {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin-top: 8px; font-size: 11px; font-weight: 600;
+    padding: 3px 8px; border-radius: 20px;
+  }
+  .site-card-status.GOOD    { background: var(--good-bg);    color: var(--good); }
+  .site-card-status.MODERATE { background: var(--moderate-bg); color: var(--moderate); }
+  .site-card-status.POOR    { background: var(--poor-bg);    color: var(--poor); }
+  .site-card-status.ADVISORY { background: var(--advisory-bg); color: var(--advisory); }
+  .site-card-status.UNKNOWN { background: var(--unknown-bg); color: var(--text-muted); }
+
+  .site-card-footer {
+    margin-top: 12px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .site-card-source { font-size: 10px; color: var(--text-muted); }
+  .site-card-date   { font-size: 10px; color: var(--text-muted); }
+  .tier-dot {
+    display: inline-block; width: 6px; height: 6px;
+    border-radius: 50%; margin-right: 3px;
+  }
+  .tier-dot.TIER_1 { background: var(--tier1); }
+  .tier-dot.TIER_2 { background: var(--tier2); }
+  .no-data-card {
+    background: var(--surface); border: 1px dashed var(--border);
+    border-radius: var(--radius); padding: 16px;
+  }
+  .no-data-card .site-card-name { color: var(--text-muted); }
+
+  /* ── Trend panel ── */
+  .trend-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .trend-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+  }
+  .trend-site-name { font-size: 15px; font-weight: 700; color: var(--text); }
+  .trend-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .trend-select {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 5px 10px;
+    font-size: 12px; cursor: pointer;
+  }
+  .trend-stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1px; background: var(--border);
+    border-top: 1px solid var(--border);
+  }
+  .trend-stat {
+    background: var(--surface2); padding: 12px 16px;
+    text-align: center;
+  }
+  .trend-stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .6px; }
+  .trend-stat-value { font-size: 18px; font-weight: 700; margin-top: 2px; }
+  .trend-stat-value.GOOD    { color: var(--good); }
+  .trend-stat-value.MODERATE { color: var(--moderate); }
+  .trend-stat-value.POOR    { color: var(--poor); }
+  .trend-stat-value.neutral { color: var(--accent); }
+
+  .chart-wrap { padding: 20px; height: 280px; position: relative; }
+  .chart-placeholder {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; color: var(--text-muted); font-size: 13px;
+  }
+
+  /* ── Sources & collection log ── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width:768px) { .two-col { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .panel-header {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    font-size: 12px; font-weight: 700; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: .7px;
+  }
+  .panel-body { padding: 0; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    padding: 8px 14px; text-align: left;
+    font-size: 10px; text-transform: uppercase; letter-spacing: .7px;
+    color: var(--text-muted); border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+
+  .status-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 700;
+  }
+  .status-pill.SUCCESS, .status-pill.GOOD   { background: var(--good-bg);    color: var(--good); }
+  .status-pill.FAILED,  .status-pill.POOR   { background: var(--poor-bg);    color: var(--poor); }
+  .status-pill.PARTIAL, .status-pill.MODERATE{ background: var(--moderate-bg); color: var(--moderate); }
+  .status-pill.RUNNING, .status-pill.UNKNOWN { background: var(--unknown-bg); color: var(--text-muted); }
+
+  /* ── Legend ── */
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ── Empty / loading states ── */
+  .loading { color: var(--text-muted); padding: 40px; text-align: center; font-size: 13px; }
+  .empty-state {
+    color: var(--text-muted); padding: 30px; text-align: center; font-size: 13px;
+    border: 1px dashed var(--border); border-radius: var(--radius);
+  }
+
+  /* ── Threshold labels on chart ── */
+  .threshold-label { font-size: 10px; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">🌊</div>
+      <div>
+        <div class="title">Miami Water Monitor</div>
+        <div class="subtitle">Real-time beach & waterway safety — Miami Beach, FL</div>
+      </div>
+    </div>
+    <div class="header-meta">
+      <div class="meta-chip"><div class="pulse" id="pulse-dot"></div><span id="last-updated">Loading…</span></div>
+      <div class="meta-chip" id="source-count">3 sources</div>
+      <button class="btn-collect" id="btn-collect" onclick="triggerRefresh()">
+        ↻ Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- Advisory Banner -->
+  <div class="advisory-banner" id="advisory-banner">
+    <div class="advisory-banner-header">⚠️ Active Water Quality Advisories</div>
+    <div id="advisory-list"></div>
+  </div>
+
+  <!-- Snapshot Section -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">
+        Current Status
+        <span class="count" id="site-count">—</span>
+      </div>
+      <div class="filter-row">
+        <button class="filter-btn active" data-filter="ALL" onclick="filterSites(this,'ALL')">All</button>
+        <button class="filter-btn" data-filter="OCEAN_BEACH" onclick="filterSites(this,'OCEAN_BEACH')">Ocean Beaches</button>
+        <button class="filter-btn" data-filter="CANAL" onclick="filterSites(this,'CANAL')">Canals</button>
+        <button class="filter-btn" data-filter="BAYSIDE" onclick="filterSites(this,'BAYSIDE')">Bayside</button>
+        <button class="filter-btn" data-filter="INTRACOASTAL" onclick="filterSites(this,'INTRACOASTAL')">Intracoastal</button>
+      </div>
+    </div>
+    <div class="site-grid" id="site-grid">
+      <div class="loading">Loading site data…</div>
+    </div>
+  </div>
+
+  <!-- Trend Section -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Trend Analysis</div>
+      <div class="trend-controls">
+        <select class="trend-select" id="trend-site-select" onchange="loadTrend()">
+          <option value="">— select site —</option>
+        </select>
+        <select class="trend-select" id="trend-days-select" onchange="loadTrend()">
+          <option value="30">30 days</option>
+          <option value="60">60 days</option>
+          <option value="90" selected>90 days</option>
+          <option value="180">180 days</option>
+        </select>
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div>DOH (TIER 1)</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#818cf8"></div>Waterkeeper (TIER 2)</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#f59e0b;opacity:.5"></div>30-day avg</div>
+        </div>
+      </div>
+    </div>
+    <div class="trend-panel">
+      <div class="trend-stats" id="trend-stats">
+        <div class="trend-stat"><div class="trend-stat-label">Latest</div><div class="trend-stat-value neutral" id="stat-latest">—</div></div>
+        <div class="trend-stat"><div class="trend-stat-label">30-day Avg</div><div class="trend-stat-value neutral" id="stat-30d">—</div></div>
+        <div class="trend-stat"><div class="trend-stat-label">Baseline Avg</div><div class="trend-stat-value neutral" id="stat-baseline">—</div></div>
+        <div class="trend-stat"><div class="trend-stat-label">Peak (period)</div><div class="trend-stat-value neutral" id="stat-peak">—</div></div>
+        <div class="trend-stat"><div class="trend-stat-label">Safe Days</div><div class="trend-stat-value neutral" id="stat-safe">—</div></div>
+        <div class="trend-stat"><div class="trend-stat-label">Threshold</div><div class="trend-stat-value neutral">70 MPN</div></div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-placeholder" id="chart-placeholder">Select a site above to view trend data</div>
+        <canvas id="trend-chart" style="display:none"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom panels -->
+  <div class="section">
+    <div class="two-col">
+
+      <!-- Source reliability -->
+      <div class="panel">
+        <div class="panel-header">Data Sources</div>
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Source</th><th>Tier</th><th>Last Run</th><th>Records</th></tr></thead>
+            <tbody id="sources-tbody"><tr><td colspan="4" class="loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Collection log -->
+      <div class="panel">
+        <div class="panel-header">Collection Log</div>
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Time</th><th>Source</th><th>Status</th><th>Records</th></tr></thead>
+            <tbody id="runs-tbody"><tr><td colspan="4" class="loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- All Readings Table (collapsible) -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">All Recent Readings <span class="count" id="readings-count">—</span></div>
+      <button class="filter-btn" onclick="toggleReadings()" id="readings-toggle">Show</button>
+    </div>
+    <div id="readings-panel" style="display:none">
+      <div class="panel">
+        <div class="panel-body">
+          <table>
+            <thead><tr>
+              <th>Date</th><th>Site</th><th>Value</th><th>Status</th>
+              <th>Source</th><th>Tier</th><th>NELAP</th><th>Collected</th>
+            </tr></thead>
+            <tbody id="readings-tbody"><tr><td colspan="8" class="loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let snapshot   = null;
+let trendChart = null;
+let currentFilter = 'ALL';
+let selectedSite  = null;
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+const fmt = {
+  date: d => d ? d.slice(0,10) : '—',
+  time: d => {
+    if (!d) return '—';
+    try { return new Date(d).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
+    catch { return d.slice(0,16).replace('T',' '); }
+  },
+  val: v => v == null ? '—' : Number(v).toFixed(1),
+  ago: d => {
+    if (!d) return '—';
+    const diff = Date.now() - new Date(d);
+    const h = Math.floor(diff/3600000);
+    if (h < 1) return 'just now';
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h/24)}d ago`;
+  }
+};
+
+const statusLabel = {
+  GOOD: '✓ Safe',  MODERATE: '◑ Caution',
+  POOR: '✗ Unsafe', ADVISORY: '⚠ Advisory',
+  UNKNOWN: '? No Data'
+};
+const typeLabel = {
+  OCEAN_BEACH: 'Ocean', CANAL: 'Canal',
+  BAYSIDE: 'Bayside', INTRACOASTAL: 'Intracoastal'
+};
+
+function classify(val) {
+  if (val == null) return 'UNKNOWN';
+  if (val <= 35)  return 'GOOD';
+  if (val <= 70)  return 'MODERATE';
+  return 'POOR';
+}
+
+// ── Data loading ──────────────────────────────────────────────────────────
+async function loadSnapshot() {
+  try {
+    const r = await fetch('/api/snapshot');
+    snapshot = await r.json();
+    renderAll();
+  } catch(e) {
+    document.getElementById('site-grid').innerHTML =
+      '<div class="empty-state">Could not connect to server. Is dashboard/server.py running?</div>';
+  }
+}
+
+async function loadTrend() {
+  const siteSel = document.getElementById('trend-site-select');
+  const daysSel = document.getElementById('trend-days-select');
+  const site = siteSel.value;
+  const days = daysSel.value || 90;
+  if (!site) return;
+  selectedSite = site;
+
+  const r = await fetch(`/api/trends?site=${encodeURIComponent(site)}&days=${days}`);
+  const data = await r.json();
+  renderTrend(data);
+}
+
+async function loadRuns() {
+  const r = await fetch('/api/runs?limit=15');
+  const runs = await r.json();
+  renderRuns(runs);
+}
+
+// ── Render: snapshot → cards ──────────────────────────────────────────────
+function renderAll() {
+  if (!snapshot) return;
+
+  // Header meta
+  document.getElementById('last-updated').textContent =
+    'Updated ' + fmt.ago(snapshot.generated_at);
+  document.getElementById('pulse-dot').className =
+    'pulse' + (snapshot.last_runs?.some(r => r.status === 'SUCCESS') ? '' : ' stale');
+
+  // Advisory banner
+  const advisories = snapshot.active_advisories || [];
+  const banner = document.getElementById('advisory-banner');
+  const list   = document.getElementById('advisory-list');
+  if (advisories.length > 0) {
+    banner.classList.add('visible');
+    list.innerHTML = advisories.map(a => `
+      <div class="advisory-item">
+        <div class="advisory-site">${a.display_name}</div>
+        <div class="advisory-desc">${(a.description || '').slice(0,200)}</div>
+        <div class="advisory-meta">${fmt.date(a.issued_date)}</div>
+      </div>`).join('');
+  } else {
+    banner.classList.remove('visible');
+  }
+
+  // Build lookup: site_name → reading
+  const readingMap = {};
+  (snapshot.latest_readings || []).forEach(r => {
+    if (!readingMap[r.site_name] || r.sample_date > readingMap[r.site_name].sample_date)
+      readingMap[r.site_name] = r;
+  });
+  const avgMap = {};
+  (snapshot.site_avgs_30d || []).forEach(r => { avgMap[r.site_name] = r; });
+  const advisorySet = new Set((snapshot.active_advisories||[]).map(a => a.site_name));
+
+  const allSites = snapshot.all_sites || [];
+  document.getElementById('site-count').textContent = allSites.length + ' sites';
+
+  // Populate site select for trend
+  const sel = document.getElementById('trend-site-select');
+  const currentVal = sel.value;
+  sel.innerHTML = '<option value="">— select site —</option>' +
+    allSites.map(s =>
+      `<option value="${s.name}" ${s.name === currentVal ? 'selected' : ''}>${s.display_name}</option>`
+    ).join('');
+
+  renderSiteGrid(allSites, readingMap, avgMap, advisorySet);
+  renderSources();
+  loadRuns();
+  renderReadingsTable(snapshot.latest_readings || []);
+}
+
+function renderSiteGrid(sites, readingMap, avgMap, advisorySet) {
+  const grid = document.getElementById('site-grid');
+  const filtered = currentFilter === 'ALL'
+    ? sites : sites.filter(s => s.location_type === currentFilter);
+
+  if (!filtered.length) {
+    grid.innerHTML = '<div class="empty-state">No sites match this filter.</div>';
+    return;
+  }
+
+  grid.innerHTML = filtered.map(site => {
+    const r = readingMap[site.name];
+    const isAdvisory = advisorySet.has(site.name);
+    const avg = avgMap[site.name];
+
+    if (!r) {
+      return `
+        <div class="no-data-card site-card UNKNOWN" onclick="selectSite('${site.name}')">
+          <div class="site-card-top">
+            <div class="site-card-name">${site.display_name}</div>
+            <span class="site-type-badge">${typeLabel[site.location_type]||site.location_type}</span>
+          </div>
+          <div class="site-card-value UNKNOWN" style="font-size:18px;margin-top:10px">No data yet</div>
+          <span class="site-card-status UNKNOWN">? No Data</span>
+          <div class="site-card-footer">
+            <span class="site-card-source">—</span>
+            <span class="site-card-date">—</span>
+          </div>
+        </div>`;
+    }
+
+    const rc = isAdvisory ? 'ADVISORY' : (r.result_class || classify(r.value));
+    const valStr = r.value != null ? Number(r.value).toFixed(1) : (isAdvisory ? 'ADVISORY' : '—');
+    const avgStr = avg ? Number(avg.avg_30d).toFixed(0) + ' avg' : '';
+
+    return `
+      <div class="site-card ${rc}${selectedSite===site.name?' selected':''}"
+           onclick="selectSite('${site.name}')">
+        <div class="site-card-top">
+          <div class="site-card-name">${site.display_name}</div>
+          <span class="site-type-badge">${typeLabel[site.location_type]||site.location_type}</span>
+        </div>
+        <div class="site-card-value ${rc}">
+          ${valStr}${r.value!=null ? `<span class="unit">MPN/100mL</span>` : ''}
+        </div>
+        <span class="site-card-status ${rc}">${statusLabel[rc]||rc}</span>
+        ${avgStr ? `<div style="font-size:10px;color:var(--text-muted);margin-top:6px">30d ${avgStr}</div>` : ''}
+        <div class="site-card-footer">
+          <span class="site-card-source">
+            <span class="tier-dot ${r.veracity_tier}"></span>
+            ${(r.source_name||'').replace(' Healthy Beaches','').replace(' Rising Above','')}
+          </span>
+          <span class="site-card-date">${fmt.date(r.sample_date)}</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function selectSite(siteName) {
+  selectedSite = siteName;
+  document.getElementById('trend-site-select').value = siteName;
+  loadTrend();
+  // re-render cards to update selection highlight
+  if (snapshot) {
+    const readingMap = {};
+    (snapshot.latest_readings||[]).forEach(r => { readingMap[r.site_name] = r; });
+    const avgMap = {};
+    (snapshot.site_avgs_30d||[]).forEach(r => { avgMap[r.site_name] = r; });
+    const advisorySet = new Set((snapshot.active_advisories||[]).map(a => a.site_name));
+    renderSiteGrid(snapshot.all_sites||[], readingMap, avgMap, advisorySet);
+  }
+  document.querySelector('.trend-panel')?.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ── Render: trend chart ───────────────────────────────────────────────────
+function renderTrend(data) {
+  const readings = data.readings || [];
+  const placeholder = document.getElementById('chart-placeholder');
+  const canvas = document.getElementById('trend-chart');
+
+  if (!readings.length) {
+    placeholder.style.display = 'flex';
+    placeholder.textContent = 'No readings yet for this site — run data collectors to populate.';
+    canvas.style.display = 'none';
+    updateTrendStats(data, []);
+    return;
+  }
+
+  placeholder.style.display = 'none';
+  canvas.style.display = 'block';
+
+  // Group by source
+  const bySource = {};
+  readings.forEach(r => {
+    if (!bySource[r.source_name]) bySource[r.source_name] = [];
+    bySource[r.source_name].push(r);
+  });
+
+  // Compute 30-day rolling average over all readings
+  const allDates = [...new Set(readings.map(r => r.sample_date))].sort();
+  const rollingAvg = allDates.map(date => {
+    const d = new Date(date);
+    const cutoff = new Date(d); cutoff.setDate(d.getDate() - 30);
+    const window = readings.filter(r => {
+      const rd = new Date(r.sample_date);
+      return rd <= d && rd >= cutoff;
+    });
+    if (!window.length) return null;
+    return +(window.reduce((s,r) => s+r.value, 0) / window.length).toFixed(1);
+  });
+
+  const sourceColors = {
+    'DOH Healthy Beaches': '#38bdf8',
+    'MB Rising Above':     '#34d399',
+    'Miami Waterkeeper':   '#818cf8',
+  };
+  const datasets = Object.entries(bySource).map(([src, rows]) => ({
+    label: src,
+    data: rows.map(r => ({x: r.sample_date, y: r.value})),
+    borderColor: sourceColors[src] || '#94a3b8',
+    backgroundColor: (sourceColors[src]||'#94a3b8') + '22',
+    fill: false, tension: 0.3, pointRadius: 4, pointHoverRadius: 6,
+    borderWidth: 2,
+  }));
+
+  // Rolling average dataset
+  datasets.push({
+    label: '30-day Rolling Avg',
+    data: allDates.map((d,i) => ({x:d, y:rollingAvg[i]})),
+    borderColor: '#f59e0b', backgroundColor: 'transparent',
+    borderDash: [5,3], tension: 0.4, pointRadius: 0,
+    borderWidth: 1.5,
+  });
+
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: { color: '#94a3b8', font: {size:11}, boxWidth: 20, padding: 12 }
+        },
+        tooltip: {
+          backgroundColor: '#1a2235',
+          titleColor: '#e2e8f0', bodyColor: '#94a3b8',
+          borderColor: '#1f2d44', borderWidth: 1,
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + ' MPN/100mL' : '—'}`,
+            afterBody: (items) => {
+              const val = items.find(i => i.parsed.y != null)?.parsed.y;
+              if (val == null) return [];
+              if (val > 70) return ['⚠ Above safe threshold (70)'];
+              if (val > 35) return ['◑ Caution zone (35-70)'];
+              return ['✓ Safe range'];
+            }
+          }
+        },
+        annotation: { annotations: {} } // Chart.js annotation plugin not loaded
+      },
+      scales: {
+        x: {
+          type: 'category',
+          ticks: { color:'#475569', maxTicksLimit:8, font:{size:10} },
+          grid: { color:'#1f2d44' },
+        },
+        y: {
+          ticks: { color:'#475569', font:{size:10} },
+          grid: { color:'#1f2d44' },
+          title: { display:true, text:'MPN/100mL', color:'#475569', font:{size:10} },
+          min: 0,
+        }
+      }
+    },
+    plugins: [{
+      // Draw threshold lines inline (no plugin needed)
+      afterDraw(chart) {
+        const {ctx, chartArea: {left,right,top,bottom}, scales:{y}} = chart;
+        const drawLine = (val, color, label) => {
+          const yPos = y.getPixelForValue(val);
+          if (yPos < top || yPos > bottom) return;
+          ctx.save();
+          ctx.setLineDash([6,3]);
+          ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = .6;
+          ctx.beginPath(); ctx.moveTo(left, yPos); ctx.lineTo(right, yPos); ctx.stroke();
+          ctx.globalAlpha = .8;
+          ctx.fillStyle = color; ctx.font = '10px system-ui';
+          ctx.fillText(label, right - 80, yPos - 4);
+          ctx.restore();
+        };
+        drawLine(70, '#ef4444', '70 MPN (unsafe)');
+        drawLine(35, '#f59e0b', '35 MPN (caution)');
+      }
+    }]
+  });
+
+  updateTrendStats(data, readings);
+}
+
+function updateTrendStats(data, readings) {
+  const vals = readings.map(r => r.value).filter(v => v != null);
+  const latest = vals.length ? vals[vals.length-1] : null;
+  const avg30  = vals.length ? +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1) : null;
+  const peak   = vals.length ? Math.max(...vals) : null;
+  const safeCnt= vals.filter(v => v<=70).length;
+
+  const rc = v => v==null ? 'neutral' : v<=35 ? 'GOOD' : v<=70 ? 'MODERATE' : 'POOR';
+
+  const set = (id, val, cls) => {
+    const el = document.getElementById(id);
+    el.textContent = val != null ? val.toFixed(1) : '—';
+    el.className = 'trend-stat-value ' + (cls || 'neutral');
+  };
+  set('stat-latest',   latest,           rc(latest));
+  set('stat-30d',      avg30,            rc(avg30));
+  set('stat-baseline', data.baseline_avg, rc(data.baseline_avg));
+  set('stat-peak',     peak,             rc(peak));
+  document.getElementById('stat-safe').textContent =
+    vals.length ? `${safeCnt}/${vals.length}` : '—';
+  document.getElementById('stat-safe').className =
+    'trend-stat-value ' + (vals.length && safeCnt===vals.length ? 'GOOD' : safeCnt===0 ? 'POOR' : 'MODERATE');
+}
+
+// ── Render: sources table ─────────────────────────────────────────────────
+function renderSources() {
+  if (!snapshot) return;
+  const runs = snapshot.last_runs || [];
+  const tierBadge = t => t === 'TIER_1'
+    ? '<span style="color:var(--tier1)">● TIER 1</span>'
+    : '<span style="color:var(--tier2)">● TIER 2</span>';
+  const tbody = document.getElementById('sources-tbody');
+  const sourceInfo = {
+    'DOH Healthy Beaches': {tier:'TIER_1', org:'FL Dept of Health'},
+    'MB Rising Above':     {tier:'TIER_1', org:'City of Miami Beach'},
+    'Miami Waterkeeper':   {tier:'TIER_2', org:'Miami Waterkeeper'},
+  };
+  tbody.innerHTML = Object.entries(sourceInfo).map(([name, info]) => {
+    const run = runs.find(r => r.source_name === name);
+    return `<tr>
+      <td style="font-weight:500">${name}</td>
+      <td>${tierBadge(info.tier)}</td>
+      <td style="color:var(--text-muted)">${run ? fmt.ago(run.completed_at||run.started_at) : '—'}</td>
+      <td style="color:var(--text-muted)">${run ? run.records_added : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Render: runs table ────────────────────────────────────────────────────
+function renderRuns(runs) {
+  const tbody = document.getElementById('runs-tbody');
+  if (!runs.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted);padding:16px">No runs yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = runs.map(r => `
+    <tr>
+      <td style="color:var(--text-muted)">${fmt.time(r.started_at)}</td>
+      <td style="font-weight:500">${(r.source_name||'').replace(' Healthy Beaches','')}</td>
+      <td><span class="status-pill ${r.status}">${r.status}</span></td>
+      <td style="color:var(--text-muted)">${r.records_added}</td>
+    </tr>`).join('');
+}
+
+// ── Render: readings table ────────────────────────────────────────────────
+function renderReadingsTable(readings) {
+  document.getElementById('readings-count').textContent = readings.length;
+  const tbody = document.getElementById('readings-tbody');
+  if (!readings.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-muted);padding:16px">No readings yet — run the collector to populate.</td></tr>';
+    return;
+  }
+  const sorted = [...readings].sort((a,b) => (b.sample_date||'').localeCompare(a.sample_date||''));
+  tbody.innerHTML = sorted.map(r => {
+    const rc = r.result_class || 'UNKNOWN';
+    return `<tr>
+      <td>${fmt.date(r.sample_date)}</td>
+      <td style="font-weight:500">${r.display_name||r.site_name||'—'}</td>
+      <td>${r.value!=null ? Number(r.value).toFixed(1)+' '+r.unit : '—'}</td>
+      <td><span class="status-pill ${rc}">${rc}</span></td>
+      <td style="color:var(--text-muted)">${r.source_name||'—'}</td>
+      <td style="color:var(--text-muted);font-size:10px">${r.veracity_tier||'—'}</td>
+      <td style="color:${r.lab_certified?'var(--tier1)':'var(--text-muted)'};font-size:11px">${r.lab_certified?'✓':'-'}</td>
+      <td style="color:var(--text-muted)">${fmt.ago(r.collected_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────
+function filterSites(btn, filter) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentFilter = filter;
+  if (snapshot) {
+    const readingMap = {};
+    (snapshot.latest_readings||[]).forEach(r => { readingMap[r.site_name] = r; });
+    const avgMap = {};
+    (snapshot.site_avgs_30d||[]).forEach(r => { avgMap[r.site_name] = r; });
+    const advisorySet = new Set((snapshot.active_advisories||[]).map(a => a.site_name));
+    renderSiteGrid(snapshot.all_sites||[], readingMap, avgMap, advisorySet);
+  }
+}
+
+function toggleReadings() {
+  const panel = document.getElementById('readings-panel');
+  const btn   = document.getElementById('readings-toggle');
+  const vis   = panel.style.display !== 'none';
+  panel.style.display = vis ? 'none' : 'block';
+  btn.textContent = vis ? 'Show' : 'Hide';
+}
+
+// ── Refresh ───────────────────────────────────────────────────────────────
+function triggerRefresh() {
+  const btn = document.getElementById('btn-collect');
+  btn.disabled = true;
+  btn.textContent = '↻ Refreshing…';
+  loadSnapshot().finally(() => {
+    btn.disabled = false;
+    btn.textContent = '↻ Refresh';
+  });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+loadSnapshot();
+// Auto-refresh every 5 minutes
+setInterval(loadSnapshot, 5 * 60 * 1000);
+</script>
+</body>
+</html>
