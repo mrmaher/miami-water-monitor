@@ -128,7 +128,7 @@ def load_snapshot():
     """)
 
     avgs = query("""
-        SELECT s.name AS site_name, ROUND(AVG(wr.value), 1) AS avg_30d, COUNT(*) AS cnt
+        SELECT s.name AS site_name, ROUND(AVG(wr.value)::numeric, 1) AS avg_30d, COUNT(*) AS cnt
         FROM water_readings wr JOIN sites s ON s.id = wr.site_id
         WHERE wr.value IS NOT NULL AND wr.sample_date >= ?
         GROUP BY s.name
