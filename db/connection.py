@@ -42,6 +42,7 @@ def _get_config(key: str) -> str:
 SUPABASE_URL = _get_config("SUPABASE_URL")
 SUPABASE_KEY = _get_config("SUPABASE_KEY")
 IS_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
+IS_POSTGRES = IS_SUPABASE  # Backward-compatible name used by collectors
 
 
 def _sqlite_conn() -> sqlite3.Connection:
@@ -77,9 +78,8 @@ def _inline_params(sql: str, params: tuple[Any, ...] | list[Any]) -> str:
             raise ValueError(f"Too many query params supplied for SQL: {sql[:200]}")
         rendered = rendered.replace("?", _sql_literal(value), 1)
 
-    if "?" in rendered:
-        raise ValueError(f"Not enough query params supplied for SQL: {sql[:200]}")
-
+    # Do not check for remaining "?" because a later string literal may legitimately
+    # contain question marks, especially error tracebacks stored in collection_runs.
     return rendered
 
 

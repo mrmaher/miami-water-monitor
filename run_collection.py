@@ -55,7 +55,7 @@ def run_all(conn: sqlite3.Connection, source_filter: str = None) -> list[dict]:
         if source_filter and COLLECTOR_ALIASES.get(source_filter, source_filter) != key:
             continue
         print(f"  → [{key}] {cls.__name__} ...", flush=True)
-        collector = cls(conn)
+        collector = cls()
         result = collector.run()
         results.append(result)
         status_icon = "✓" if result["status"] == "SUCCESS" else "✗"
