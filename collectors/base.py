@@ -72,7 +72,7 @@ class BaseCollector:
                          raw_payload: dict = None, notes: str = None):
         source_id = self._source_id()
         row = query_one("SELECT veracity_tier FROM sources WHERE id=?", (source_id,))
-        payload = json.dumps(raw_payload) if raw_payload and not IS_POSTGRES else raw_payload
+        payload = json.dumps(raw_payload) if raw_payload else None
 
         if IS_POSTGRES:
             execute(
@@ -107,7 +107,7 @@ class BaseCollector:
                           source_url: str = None, raw_payload: dict = None):
         source_id = self._source_id()
         row = query_one("SELECT veracity_tier FROM sources WHERE id=?", (source_id,))
-        payload = json.dumps(raw_payload) if raw_payload and not IS_POSTGRES else raw_payload
+        payload = json.dumps(raw_payload) if raw_payload else None
 
         if IS_POSTGRES:
             execute(

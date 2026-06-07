@@ -24,6 +24,8 @@ DB_PATH      = os.path.join(PROJECT_ROOT, 'water_monitor.db')
 sys.path.insert(0, PROJECT_ROOT)
 
 from db.init_db import init_db, get_db
+from db.connection import query, backend_name, IS_SUPABASE
+from db.connection import query, backend_name, IS_SUPABASE
 from collectors.doh_beaches    import DOHBeachesCollector
 from collectors.mb_rising_above import MBRisingAboveCollector
 from collectors.waterkeeper    import WaterkeeperCollector
@@ -66,6 +68,9 @@ def run_all(conn: sqlite3.Connection, source_filter: str = None) -> list[dict]:
 
 
 def print_report(conn: sqlite3.Connection):
+    if conn is None:
+        print('\n── DB Summary skipped for Supabase run; use direct count check. ──')
+        return
     print("\n── DB Summary ──────────────────────────────────────────────")
 
     rows = conn.execute(
@@ -140,17 +145,18 @@ def main():
     print(f"\n{'='*60}")
     print(f"Miami Water Monitor – Collection Run")
     print(f"Started: {utcnow()}")
-    print(f"DB:      {args.db}")
+    print(f"DB:      {backend_name() if IS_SUPABASE else args.db}")
     print(f"{'='*60}")
 
-    conn = init_db(args.db)
+    conn = None if IS_SUPABASE else init_db(args.db)
     print(f"Database ready.\n")
 
     if args.dry_run:
         print("--dry-run: skipping data fetch.")
         if args.report:
             print_report(conn)
-        conn.close()
+        if conn is not None:
+            conn.close()
         return
 
     print("Running collectors:")
@@ -164,7 +170,8 @@ def main():
     if args.report or True:   # always print summary
         print_report(conn)
 
-    conn.close()
+    if conn is not None:
+            conn.close()
 
     if failed:
         sys.exit(1)
