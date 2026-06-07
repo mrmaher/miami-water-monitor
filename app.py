@@ -92,63 +92,109 @@ st.markdown("""
 
 @st.cache_data(ttl=300)  # 5-minute cache
 def load_snapshot():
-    cutoff_30 = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+    from supabase import create_client
+    import pandas as pd
 
-    latest = query("""
-        SELECT s.name AS site_name, s.display_name, s.location_type,
-               wr.value, wr.unit, wr.result_class, wr.sample_date,
-               wr.collected_at, wr.veracity_tier, wr.lab_certified,
-               src.name AS source_name
-        FROM water_readings wr
-        JOIN sites s ON s.id = wr.site_id
-        JOIN sources src ON src.id = wr.source_id
-        WHERE wr.id IN (
-            SELECT id FROM water_readings wr2
-            WHERE wr2.site_id = wr.site_id AND wr2.value IS NOT NULL
-            ORDER BY wr2.sample_date DESC, wr2.collected_at DESC
-            LIMIT 1
-        )
-        ORDER BY s.location_type, s.name
-    """)
+    url = st.secrets.get("SUPABASE_URL", "")
+    key = st.secrets.get("SUPABASE_KEY", "")
+    if not url or not key:
+        return {"latest": {}, "advisories": [], "avgs": {}, "all_sites": [], "last_runs": []}
 
-    advisories = query("""
-        SELECT s.display_name, a.advisory_type, a.description, a.issued_date, src.name AS source_name
-        FROM advisories a
-        JOIN sites s ON s.id = a.site_id
-        JOIN sources src ON src.id = a.source_id
-        WHERE a.is_active = true AND a.advisory_type != 'UNKNOWN'
-        ORDER BY a.collected_at DESC
-    """) if True else query("""
-        SELECT s.display_name, a.advisory_type, a.description, a.issued_date, src.name AS source_name
-        FROM advisories a
-        JOIN sites s ON s.id = a.site_id
-        JOIN sources src ON src.id = a.source_id
-        WHERE a.is_active = 1 AND a.advisory_type != 'UNKNOWN'
-        ORDER BY a.collected_at DESC
-    """)
+    sb = create_client(url, key)
 
-    avgs = query("""
-        SELECT s.name AS site_name, ROUND(AVG(wr.value)::numeric, 1) AS avg_30d, COUNT(*) AS cnt
-        FROM water_readings wr JOIN sites s ON s.id = wr.site_id
-        WHERE wr.value IS NOT NULL AND wr.sample_date >= ?
-        GROUP BY s.name
-    """, (cutoff_30,))
+    def df(table, limit=5000):
+        res = sb.table(table).select("*").limit(limit).execute()
+        return pd.DataFrame(res.data or [])
 
-    all_sites = query("SELECT name, display_name, location_type FROM sites ORDER BY location_type, name")
-    last_runs = query("""
-        SELECT src.name AS source_name, cr.status, cr.completed_at, cr.records_added
-        FROM collection_runs cr JOIN sources src ON src.id = cr.source_id
-        ORDER BY cr.started_at DESC LIMIT 10
-    """)
+    sites = df("sites")
+    readings = df("water_readings")
+    sources = df("sources")
+    advisories = df("advisories")
+    runs = df("collection_runs", 500)
 
-    return {
-        "latest":     {r['site_name']: r for r in latest},
-        "advisories": advisories,
-        "avgs":       {r['site_name']: r for r in avgs},
-        "all_sites":  all_sites,
-        "last_runs":  last_runs,
+    all_sites = sites.to_dict("records") if not sites.empty else []
+
+    if sites.empty or readings.empty:
+        return {
+            "latest": {},
+            "advisories": advisories.to_dict("records") if not advisories.empty else [],
+            "avgs": {},
+            "all_sites": all_sites,
+            "last_runs": runs.to_dict("records") if not runs.empty else [],
+        }
+
+    for frame in (sites, readings, sources, advisories, runs):
+        if not frame.empty and "id" in frame.columns:
+            frame["id"] = pd.to_numeric(frame["id"], errors="coerce")
+
+    readings["site_id"] = pd.to_numeric(readings["site_id"], errors="coerce")
+    readings["source_id"] = pd.to_numeric(readings["source_id"], errors="coerce")
+
+    merged = readings.merge(
+        sites[["id", "name", "display_name", "location_type"]],
+        how="left",
+        left_on="site_id",
+        right_on="id",
+        suffixes=("", "_site"),
+    )
+    merged["site_name"] = merged["name"]
+
+    if not sources.empty:
+        src = sources[[c for c in ["id", "name"] if c in sources.columns]].rename(columns={"name": "source_name"})
+        merged = merged.merge(src, how="left", left_on="source_id", right_on="id", suffixes=("", "_source"))
+
+    for col in ["source_name", "veracity_tier", "lab_certified"]:
+        if col not in merged.columns:
+            merged[col] = None
+
+    merged["sample_date_dt"] = pd.to_datetime(merged["sample_date"], errors="coerce")
+    merged["collected_at_dt"] = pd.to_datetime(merged["collected_at"], errors="coerce")
+
+    latest_df = (
+        merged.sort_values(["sample_date_dt", "collected_at_dt"], ascending=True)
+        .groupby("site_name", as_index=False)
+        .tail(1)
+    )
+
+    latest = {
+        r["site_name"]: r.where(pd.notna(r), None).to_dict()
+        for _, r in latest_df.iterrows()
+        if r.get("site_name") is not None
     }
 
+    if not advisories.empty and "site_id" in advisories.columns:
+        advisories["site_id"] = pd.to_numeric(advisories["site_id"], errors="coerce")
+        advisories = advisories.merge(
+            sites[["id", "display_name"]],
+            how="left",
+            left_on="site_id",
+            right_on="id",
+            suffixes=("", "_site"),
+        )
+
+    advisory_records = advisories.where(pd.notna(advisories), None).to_dict("records") if not advisories.empty else []
+
+    cutoff = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=30)
+    recent = merged[merged["sample_date_dt"].dt.tz_localize(None) >= cutoff].copy()
+    avgs = {}
+    if not recent.empty:
+        recent["value_numeric"] = pd.to_numeric(recent["value"], errors="coerce")
+        avg_df = recent.groupby("site_name", as_index=False).agg(
+            avg_30d=("value_numeric", "mean"),
+            cnt=("value_numeric", "count"),
+        )
+        avg_df["avg_30d"] = avg_df["avg_30d"].round(1)
+        avgs = {r["site_name"]: r.where(pd.notna(r), None).to_dict() for _, r in avg_df.iterrows()}
+
+    last_runs = runs.where(pd.notna(runs), None).to_dict("records") if not runs.empty else []
+
+    return {
+        "latest": latest,
+        "advisories": advisory_records,
+        "avgs": avgs,
+        "all_sites": all_sites,
+        "last_runs": last_runs,
+    }
 
 def _rc(value):
     if value is None: return "UNKNOWN"
