@@ -1,19 +1,13 @@
-
 """
-Miami Water Monitor — Dashboard
-
-Old-dashboard style UI with direct Supabase table reads.
-No RPC. No SQL joins. No db.connection dependency.
+Miami Water Monitor — Home Dashboard
+Real-time beach & waterway safety snapshot for Miami Beach, FL.
 """
 
-from __future__ import annotations
-
-from datetime import datetime, timezone
-import pandas as pd
 import streamlit as st
-from supabase import create_client
+from datetime import datetime, timezone, timedelta
+from db.connection import query, query_one, backend_name
 
-
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Miami Water Monitor",
     page_icon="🌊",
@@ -21,383 +15,301 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.markdown(
-    """
+# ── Global CSS ────────────────────────────────────────────────────────────────
+st.markdown("""
 <style>
-    .main { background: #f8fafc; }
-    .hero {
-        padding: 1.2rem 1.4rem;
-        border-radius: 1.1rem;
-        background: linear-gradient(135deg, #0f766e 0%, #0369a1 100%);
-        color: white;
-        margin-bottom: 1rem;
-    }
-    .hero h1 { margin: 0; font-size: 2rem; }
-    .hero p { margin: .25rem 0 0 0; opacity: .9; }
-    .metric-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 1rem;
-        padding: 1rem;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
-    }
-    .metric-label {
-        color: #64748b;
-        font-size: .8rem;
-        text-transform: uppercase;
-        letter-spacing: .04em;
-    }
-    .metric-value {
-        color: #0f172a;
-        font-size: 1.8rem;
-        font-weight: 750;
-        margin-top: .2rem;
-    }
-    .site-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 1rem;
-        padding: 1rem;
-        min-height: 185px;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
-        margin-bottom: 1rem;
-    }
-    .site-title {
-        font-size: 1.05rem;
-        font-weight: 750;
-        color: #0f172a;
-        margin-bottom: .2rem;
-    }
-    .site-type {
-        color: #64748b;
-        font-size: .82rem;
-        margin-bottom: .75rem;
-    }
-    .reading {
-        font-size: 1.6rem;
-        font-weight: 800;
-        color: #0f172a;
-        margin-bottom: .25rem;
-    }
-    .subtle {
-        color: #64748b;
-        font-size: .82rem;
-    }
-    .status {
-        display: inline-block;
-        padding: .25rem .55rem;
-        border-radius: 999px;
-        font-size: .78rem;
-        font-weight: 700;
-        margin: .35rem 0;
-    }
-    .good { background: #dcfce7; color: #166534; }
-    .moderate { background: #fef9c3; color: #854d0e; }
-    .poor { background: #fee2e2; color: #991b1b; }
-    .unknown { background: #e2e8f0; color: #334155; }
-    .advisory {
-        background: #fff7ed;
-        border: 1px solid #fed7aa;
-        color: #9a3412;
-        border-radius: 1rem;
-        padding: 1rem;
-        margin-bottom: 1rem;
-    }
+  /* Hide Streamlit default header chrome */
+  #MainMenu, footer, header { visibility: hidden; }
+  .block-container { padding-top: 1.5rem; padding-bottom: 3rem; }
+
+  /* Site status cards */
+  .site-card {
+    background: #111827;
+    border: 1px solid #1f2d44;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 4px;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color .2s;
+  }
+  .site-card:hover { border-color: #38bdf8; }
+  .card-stripe {
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  }
+  .card-name   { font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 8px; }
+  .card-type   { font-size: 10px; color: #64748b; }
+  .card-value  { font-size: 26px; font-weight: 700; margin: 6px 0 2px; }
+  .card-unit   { font-size: 11px; color: #64748b; margin-left: 2px; }
+  .card-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-block; margin: 4px 0; }
+  .card-footer { font-size: 10px; color: #64748b; margin-top: 10px; padding-top: 8px; border-top: 1px solid #1f2d44; display: flex; justify-content: space-between; }
+  .tier-dot    { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+
+  /* Status color classes */
+  .GOOD      { color: #22c55e; }
+  .MODERATE  { color: #f59e0b; }
+  .POOR      { color: #ef4444; }
+  .ADVISORY  { color: #dc2626; }
+  .UNKNOWN   { color: #475569; }
+
+  .bg-GOOD     { background: rgba(34,197,94,.12);  color: #22c55e; }
+  .bg-MODERATE { background: rgba(245,158,11,.12); color: #f59e0b; }
+  .bg-POOR     { background: rgba(239,68,68,.12);  color: #ef4444; }
+  .bg-ADVISORY { background: rgba(220,38,38,.15);  color: #dc2626; }
+  .bg-UNKNOWN  { background: rgba(71,85,105,.12);  color: #475569; }
+
+  .stripe-GOOD     { background: #22c55e; }
+  .stripe-MODERATE { background: #f59e0b; }
+  .stripe-POOR     { background: #ef4444; }
+  .stripe-ADVISORY { background: #dc2626; }
+  .stripe-UNKNOWN  { background: #334155; }
+
+  /* Advisory banner */
+  .advisory-banner {
+    background: rgba(220,38,38,.12);
+    border: 1px solid rgba(220,38,38,.4);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+  }
+  .advisory-title { color: #fca5a5; font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+  .advisory-item  { color: #e2e8f0; font-size: 13px; padding: 6px 0; border-top: 1px solid rgba(220,38,38,.2); }
+  .advisory-site  { font-weight: 600; color: #fca5a5; }
+
+  /* Metric chips */
+  .metric-chip {
+    background: #111827; border: 1px solid #1f2d44;
+    border-radius: 8px; padding: 10px 14px; text-align: center; margin-bottom: 8px;
+  }
+  .chip-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .6px; }
+  .chip-value { font-size: 20px; font-weight: 700; margin-top: 2px; }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 
-@st.cache_resource(ttl=600)
-def get_client():
-    url = st.secrets.get("SUPABASE_URL", "")
-    key = st.secrets.get("SUPABASE_KEY", "")
-    if not url or not key:
-        st.error("Missing SUPABASE_URL or SUPABASE_KEY in Streamlit secrets.")
-        st.stop()
-    return create_client(url, key)
+# ── Data loading ──────────────────────────────────────────────────────────────
 
-
-@st.cache_data(ttl=300)
-def load_table(name: str, limit: int = 5000) -> pd.DataFrame:
-    sb = get_client()
-    res = sb.table(name).select("*").limit(limit).execute()
-    return pd.DataFrame(res.data or [])
-
-
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300)  # 5-minute cache
 def load_snapshot():
-    sites = load_table("sites")
-    readings = load_table("water_readings")
-    sources = load_table("sources")
-    advisories = load_table("advisories")
-    runs = load_table("collection_runs", limit=500)
+    cutoff_30 = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
 
-    for df in (sites, readings, sources, advisories, runs):
-        if not df.empty and "id" in df.columns:
-            df["id"] = pd.to_numeric(df["id"], errors="coerce")
-
-    if sites.empty:
-        latest = pd.DataFrame()
-    elif readings.empty:
-        latest = pd.DataFrame()
-    else:
-        readings["site_id"] = pd.to_numeric(readings.get("site_id"), errors="coerce")
-        readings["source_id"] = pd.to_numeric(readings.get("source_id"), errors="coerce")
-
-        merged = readings.merge(
-            sites[["id", "name", "display_name", "location_type"]],
-            how="left",
-            left_on="site_id",
-            right_on="id",
-            suffixes=("", "_site"),
+    latest = query("""
+        SELECT s.name AS site_name, s.display_name, s.location_type,
+               wr.value, wr.unit, wr.result_class, wr.sample_date,
+               wr.collected_at, wr.veracity_tier, wr.lab_certified,
+               src.name AS source_name
+        FROM water_readings wr
+        JOIN sites s ON s.id = wr.site_id
+        JOIN sources src ON src.id = wr.source_id
+        WHERE wr.id IN (
+            SELECT id FROM water_readings wr2
+            WHERE wr2.site_id = wr.site_id AND wr2.value IS NOT NULL
+            ORDER BY wr2.sample_date DESC, wr2.collected_at DESC
+            LIMIT 1
         )
+        ORDER BY s.location_type, s.name
+    """)
 
-        if not sources.empty and "source_id" in merged.columns:
-            source_cols = [c for c in ["id", "name", "display_name", "veracity_tier"] if c in sources.columns]
-            src = sources[source_cols].copy()
-            src = src.rename(columns={"name": "source_name", "display_name": "source_display_name"})
-            merged = merged.merge(
-                src,
-                how="left",
-                left_on="source_id",
-                right_on="id",
-                suffixes=("", "_source"),
-            )
+    advisories = query("""
+        SELECT s.display_name, a.advisory_type, a.description, a.issued_date, src.name AS source_name
+        FROM advisories a
+        JOIN sites s ON s.id = a.site_id
+        JOIN sources src ON src.id = a.source_id
+        WHERE a.is_active = true AND a.advisory_type != 'UNKNOWN'
+        ORDER BY a.collected_at DESC
+    """) if True else query("""
+        SELECT s.display_name, a.advisory_type, a.description, a.issued_date, src.name AS source_name
+        FROM advisories a
+        JOIN sites s ON s.id = a.site_id
+        JOIN sources src ON src.id = a.source_id
+        WHERE a.is_active = 1 AND a.advisory_type != 'UNKNOWN'
+        ORDER BY a.collected_at DESC
+    """)
 
-        merged["sample_date_dt"] = pd.to_datetime(merged.get("sample_date"), errors="coerce")
-        if "collected_at" in merged.columns:
-            merged["collected_at_dt"] = pd.to_datetime(merged["collected_at"], errors="coerce")
-        else:
-            merged["collected_at_dt"] = merged["sample_date_dt"]
+    avgs = query("""
+        SELECT s.name AS site_name, ROUND(AVG(wr.value)::numeric, 1) AS avg_30d, COUNT(*) AS cnt
+        FROM water_readings wr JOIN sites s ON s.id = wr.site_id
+        WHERE wr.value IS NOT NULL AND wr.sample_date >= ?
+        GROUP BY s.name
+    """, (cutoff_30,))
 
-        latest = (
-            merged.sort_values(["sample_date_dt", "collected_at_dt"], ascending=True)
-            .groupby("site_id", as_index=False)
-            .tail(1)
-        )
-
-    if not advisories.empty and "site_id" in advisories.columns and not sites.empty:
-        advisories["site_id"] = pd.to_numeric(advisories["site_id"], errors="coerce")
-        advisories = advisories.merge(
-            sites[["id", "display_name"]],
-            how="left",
-            left_on="site_id",
-            right_on="id",
-            suffixes=("", "_site"),
-        )
-
-    if not runs.empty and "started_at" in runs.columns:
-        runs["started_at_dt"] = pd.to_datetime(runs["started_at"], errors="coerce")
-        runs = runs.sort_values("started_at_dt", ascending=False).head(10)
+    all_sites = query("SELECT name, display_name, location_type FROM sites ORDER BY location_type, name")
+    last_runs = query("""
+        SELECT src.name AS source_name, cr.status, cr.completed_at, cr.records_added
+        FROM collection_runs cr JOIN sources src ON src.id = cr.source_id
+        ORDER BY cr.started_at DESC LIMIT 10
+    """)
 
     return {
-        "sites": sites,
-        "latest": latest,
+        "latest":     {r['site_name']: r for r in latest},
         "advisories": advisories,
-        "runs": runs,
-        "debug": {
-            "sites": len(sites),
-            "readings": len(readings),
-            "sources": len(sources),
-            "advisories": len(advisories),
-            "runs": len(runs),
-            "latest": len(latest),
-        },
+        "avgs":       {r['site_name']: r for r in avgs},
+        "all_sites":  all_sites,
+        "last_runs":  last_runs,
     }
 
 
-def status_from_row(row) -> tuple[str, str, str]:
-    rc = str(row.get("result_class", "") or "").upper()
-    value = row.get("value")
-
-    if rc in {"GOOD", "SAFE", "LOW"}:
-        return "GOOD", "✓ Safe", "good"
-    if rc in {"MODERATE", "CAUTION", "MEDIUM"}:
-        return "MODERATE", "◑ Caution", "moderate"
-    if rc in {"POOR", "UNSAFE", "HIGH", "NO_CONTACT"}:
-        return "POOR", "✗ Unsafe", "poor"
-
-    try:
-        v = float(value)
-        if v <= 35:
-            return "GOOD", "✓ Safe", "good"
-        if v <= 104:
-            return "MODERATE", "◑ Caution", "moderate"
-        return "POOR", "✗ Unsafe", "poor"
-    except Exception:
-        return "UNKNOWN", "? No Data", "unknown"
+def _rc(value):
+    if value is None: return "UNKNOWN"
+    if value <= 35:   return "GOOD"
+    if value <= 70:   return "MODERATE"
+    return "POOR"
 
 
-def type_label(x: str) -> str:
-    return {
-        "OCEAN_BEACH": "Ocean Beach",
-        "CANAL": "Canal",
-        "BAYSIDE": "Bayside",
-        "INTRACOASTAL": "Intracoastal",
-    }.get(str(x or ""), str(x or "Unknown"))
+STATUS_LABEL = {
+    "GOOD":     "✓ Safe",
+    "MODERATE": "◑ Caution",
+    "POOR":     "✗ Unsafe",
+    "ADVISORY": "⚠ Advisory",
+    "UNKNOWN":  "? No Data",
+}
+TYPE_LABEL = {
+    "OCEAN_BEACH":  "Ocean Beach",
+    "CANAL":        "Canal",
+    "BAYSIDE":      "Bayside",
+    "INTRACOASTAL": "Intracoastal",
+}
 
 
-def site_card(site: dict, reading: dict | None, advisory: bool = False) -> str:
-    if reading:
-        _, status_label, klass = status_from_row(reading)
-        val = reading.get("value")
-        unit = reading.get("unit") or ""
-        value_text = f"{float(val):.1f}" if val is not None else "—"
-        date_text = str(reading.get("sample_date") or "")[:10] or "—"
-        source = reading.get("source_name") or reading.get("source_display_name") or "—"
-    else:
-        status_label, klass = "? No Data", "unknown"
-        value_text, unit, date_text, source = "—", "", "—", "—"
-
-    if advisory:
-        status_label, klass = "⚠ Advisory", "poor"
+def site_card(site, reading, avg, is_advisory):
+    rc = "ADVISORY" if is_advisory else (reading['result_class'] if reading else "UNKNOWN")
+    val = reading['value'] if reading else None
+    val_str = f"{val:.1f}" if val is not None else ("ADVISORY" if is_advisory else "—")
+    unit_str = f'<span class="card-unit">MPN/100mL</span>' if val is not None else ""
+    avg_str = f"<div style='font-size:10px;color:#64748b;margin-top:4px'>30d avg: {avg['avg_30d']}</div>" if avg else ""
+    src = (reading['source_name'] or '').replace(' Healthy Beaches','').replace(' Rising Above','') if reading else "—"
+    tier = reading['veracity_tier'] if reading else ""
+    tier_color = "#34d399" if tier == "TIER_1" else "#a78bfa"
+    date_str = str(reading['sample_date'])[:10] if reading else "—"
 
     return f"""
-<div class="site-card">
-  <div class="site-title">{site.get('display_name') or site.get('name')}</div>
-  <div class="site-type">{type_label(site.get('location_type'))}</div>
-  <div class="reading">{value_text} <span class="subtle">{unit}</span></div>
-  <div class="status {klass}">{status_label}</div>
-  <div class="subtle">{source}</div>
-  <div class="subtle">Latest: {date_text}</div>
-</div>
-"""
+    <div class="site-card">
+      <div class="card-stripe stripe-{rc}"></div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div class="card-name">{site['display_name']}</div>
+        <div class="card-type">{TYPE_LABEL.get(site['location_type'], site['location_type'])}</div>
+      </div>
+      <div class="card-value {rc}">{val_str}{unit_str}</div>
+      <span class="card-status bg-{rc}">{STATUS_LABEL.get(rc, rc)}</span>
+      {avg_str}
+      <div class="card-footer">
+        <span><span class="tier-dot" style="background:{tier_color}"></span>{src}</span>
+        <span>{date_str}</span>
+      </div>
+    </div>"""
 
 
-def main():
-    header_left, header_right = st.columns([0.82, 0.18])
-    with header_left:
-        st.markdown(
-            """
-<div class="hero">
-  <h1>🌊 Miami Water Monitor</h1>
-  <p>Beach & waterway safety · Miami Beach, FL</p>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-    with header_right:
-        if st.button("↻ Refresh", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
+# ── Header ────────────────────────────────────────────────────────────────────
 
-    data = load_snapshot()
-    sites = data["sites"]
-    latest = data["latest"]
-    advisories = data["advisories"]
-    runs = data["runs"]
-    debug = data["debug"]
+col_logo, col_title, col_refresh = st.columns([.05, .8, .15])
+with col_logo:
+    st.markdown("<div style='font-size:32px;margin-top:4px'>🌊</div>", unsafe_allow_html=True)
+with col_title:
+    st.markdown("""
+    <div style='margin-top:4px'>
+      <span style='font-size:20px;font-weight:700;color:#e2e8f0'>Miami Water Monitor</span>
+      <span style='font-size:12px;color:#64748b;margin-left:10px'>Beach & waterway safety · Miami Beach, FL</span>
+    </div>""", unsafe_allow_html=True)
+with col_refresh:
+    if st.button("↻ Refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
-    active_advisories = advisories
-    if not advisories.empty:
-        if "is_active" in advisories.columns:
-            active_advisories = advisories[advisories["is_active"].fillna(False).astype(bool)]
-        if "advisory_type" in active_advisories.columns:
-            active_advisories = active_advisories[
-                active_advisories["advisory_type"].fillna("").astype(str).str.upper() != "UNKNOWN"
-            ]
+st.markdown("<hr style='border:none;border-top:1px solid #1f2d44;margin:8px 0 16px'>", unsafe_allow_html=True)
 
-    latest_by_site = {}
-    if not latest.empty and "site_id" in latest.columns:
-        latest_by_site = {int(r["site_id"]): r.to_dict() for _, r in latest.iterrows() if pd.notna(r["site_id"])}
+# ── Load data ─────────────────────────────────────────────────────────────────
 
-    advisory_site_ids = set()
-    if not active_advisories.empty and "site_id" in active_advisories.columns:
-        advisory_site_ids = set(active_advisories["site_id"].dropna().astype(int).tolist())
+data = load_snapshot()
+latest     = data['latest']
+advisories = data['advisories']
+avgs       = data['avgs']
+all_sites  = data['all_sites']
+last_runs  = data['last_runs']
 
-    safe_count = 0
-    poor_count = 0
-    for _, site in sites.iterrows():
-        r = latest_by_site.get(int(site["id"])) if pd.notna(site.get("id")) else None
-        if r:
-            rc, _, _ = status_from_row(r)
-            safe_count += rc == "GOOD"
-            poor_count += rc == "POOR"
+advisory_sites = {a['display_name'] for a in advisories}
 
-    total_sites = len(sites)
-    no_data = total_sites - len(latest_by_site)
-    last_collect = None
-    if not runs.empty:
-        for col in ["completed_at", "started_at"]:
-            if col in runs.columns and runs[col].notna().any():
-                last_collect = str(runs.iloc[0].get(col) or "")[:10]
-                break
+# ── Advisory banner ───────────────────────────────────────────────────────────
 
-    m1, m2, m3, m4, m5 = st.columns(5)
-    metrics = [
-        ("Total Sites", total_sites),
-        ("Safe Right Now", safe_count),
-        ("Unsafe / Advisory", poor_count + len(advisory_site_ids)),
-        ("No Data", no_data),
-        ("Last Collection", last_collect or "Never"),
-    ]
-    for col, (label, value) in zip([m1, m2, m3, m4, m5], metrics):
-        with col:
-            st.markdown(
-                f"""
-<div class="metric-card">
-  <div class="metric-label">{label}</div>
-  <div class="metric-value">{value}</div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
+if advisories:
+    items = "".join(f"""
+      <div class="advisory-item">
+        <span class="advisory-site">{a['display_name']}</span>
+        &nbsp;·&nbsp; {(a['description'] or '')[:160]}
+        <span style='float:right;color:#64748b;font-size:11px'>{str(a['issued_date'] or '')[:10]}</span>
+      </div>""" for a in advisories)
+    st.markdown(f"""
+    <div class="advisory-banner">
+      <div class="advisory-title">⚠️ Active Water Quality Advisories</div>
+      {items}
+    </div>""", unsafe_allow_html=True)
 
-    if not active_advisories.empty:
-        st.markdown("### ⚠️ Active Water Quality Advisories")
-        for _, a in active_advisories.head(5).iterrows():
-            site_name = a.get("display_name") or a.get("display_name_site") or f"Site {a.get('site_id')}"
-            desc = a.get("description") or ""
-            date = str(a.get("issued_date") or "")[:10]
-            st.markdown(
-                f'<div class="advisory"><b>{site_name}</b> · {date}<br>{str(desc)[:220]}</div>',
-                unsafe_allow_html=True,
-            )
+# ── Summary metrics ───────────────────────────────────────────────────────────
 
-    st.markdown("### Current Status — All Sites")
-    loc_filter = st.selectbox(
-        "Filter by type",
-        ["All", "Ocean Beach", "Canal", "Bayside", "Intracoastal"],
-        label_visibility="collapsed",
-    )
-    type_map = {
-        "Ocean Beach": "OCEAN_BEACH",
-        "Canal": "CANAL",
-        "Bayside": "BAYSIDE",
-        "Intracoastal": "INTRACOASTAL",
-    }
+total_sites  = len(all_sites)
+safe_count   = sum(1 for s in all_sites if (r := latest.get(s['name'])) and r['result_class'] == 'GOOD')
+poor_count   = sum(1 for s in all_sites if (r := latest.get(s['name'])) and r['result_class'] == 'POOR')
+no_data      = sum(1 for s in all_sites if s['name'] not in latest)
+last_collect = last_runs[0]['completed_at'] if last_runs else None
 
-    filtered = sites
-    if loc_filter != "All" and "location_type" in sites.columns:
-        filtered = sites[sites["location_type"] == type_map[loc_filter]]
+m1, m2, m3, m4, m5 = st.columns(5)
+def chip(col, label, value, color="#38bdf8"):
+    with col:
+        st.markdown(f"""
+        <div class="metric-chip">
+          <div class="chip-label">{label}</div>
+          <div class="chip-value" style="color:{color}">{value}</div>
+        </div>""", unsafe_allow_html=True)
 
-    cols = st.columns(4)
-    for i, (_, site) in enumerate(filtered.iterrows()):
-        site_dict = site.to_dict()
-        site_id = int(site_dict["id"])
-        reading = latest_by_site.get(site_id)
-        with cols[i % 4]:
-            st.markdown(
-                site_card(site_dict, reading, site_id in advisory_site_ids),
-                unsafe_allow_html=True,
-            )
+chip(m1, "Total Sites", total_sites)
+chip(m2, "Safe Right Now", safe_count, "#22c55e")
+chip(m3, "Unsafe / Advisory", poor_count + len(advisories), "#ef4444" if poor_count + len(advisories) > 0 else "#22c55e")
+chip(m4, "Active Advisories", len(advisories), "#dc2626" if advisories else "#22c55e")
+chip(m5, "Last Collection", str(last_collect or "Never")[:10], "#64748b")
 
-    with st.expander("Debug counts"):
-        st.json(debug)
-        st.write("Latest rows")
-        st.dataframe(latest, use_container_width=True)
-        st.write("Raw sites")
-        st.dataframe(sites, use_container_width=True)
-        st.write("Raw advisories")
-        st.dataframe(advisories, use_container_width=True)
+st.markdown("<br>", unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.caption(
-        f"Miami Water Monitor · Direct Supabase table reads · Last loaded {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
-    )
+# ── Site filter ───────────────────────────────────────────────────────────────
 
+col_head, col_filter = st.columns([.5, .5])
+with col_head:
+    st.markdown("<div style='font-size:13px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.8px'>Current Status — All Sites</div>", unsafe_allow_html=True)
+with col_filter:
+    loc_filter = st.selectbox("Filter by type", ["All", "Ocean Beach", "Canal", "Bayside", "Intracoastal"],
+                               label_visibility="collapsed")
 
-if __name__ == "__main__":
-    main()
+type_map = {"Ocean Beach": "OCEAN_BEACH", "Canal": "CANAL",
+            "Bayside": "BAYSIDE", "Intracoastal": "INTRACOASTAL"}
+filtered_sites = all_sites if loc_filter == "All" else \
+    [s for s in all_sites if s['location_type'] == type_map.get(loc_filter)]
+
+# ── Site cards grid (4 columns) ───────────────────────────────────────────────
+
+cols = st.columns(4)
+for i, site in enumerate(filtered_sites):
+    reading    = latest.get(site['name'])
+    avg        = avgs.get(site['name'])
+    is_adv     = site['display_name'] in advisory_sites
+    with cols[i % 4]:
+        st.markdown(site_card(site, reading, avg, is_adv), unsafe_allow_html=True)
+
+# ── Quick navigation hint ─────────────────────────────────────────────────────
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("""
+<div style='background:#111827;border:1px solid #1f2d44;border-radius:10px;padding:14px 20px;
+            display:flex;gap:24px;align-items:center;flex-wrap:wrap'>
+  <span style='color:#64748b;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.6px'>Explore →</span>
+  <span style='color:#38bdf8;font-size:13px'>📊 Trends — per-site history & trailing averages</span>
+  <span style='color:#38bdf8;font-size:13px'>⚠️ Advisories — full advisory log</span>
+  <span style='color:#38bdf8;font-size:13px'>🔬 Sources — data provenance & collection log</span>
+</div>""", unsafe_allow_html=True)
+
+# ── Footer ────────────────────────────────────────────────────────────────────
+
+st.markdown(f"""
+<div style='margin-top:32px;padding-top:16px;border-top:1px solid #1f2d44;
+            font-size:11px;color:#475569;display:flex;justify-content:space-between'>
+  <span>Miami Water Monitor · Data sourced from FL DOH, City of Miami Beach, Miami Waterkeeper</span>
+  <span>DB: {backend_name()} · Not a substitute for official health advisories</span>
+</div>""", unsafe_allow_html=True)
