@@ -194,6 +194,8 @@ def load_snapshot():
         "avgs": avgs,
         "all_sites": all_sites,
         "last_runs": last_runs,
+        "history": merged.where(pd.notna(merged), None).to_dict("records"),
+        "sources": sources.where(pd.notna(sources), None).to_dict("records") if not sources.empty else [],
     }
 
 def _rc(value):
@@ -272,6 +274,8 @@ advisories = data['advisories']
 avgs       = data['avgs']
 all_sites  = data['all_sites']
 last_runs  = data['last_runs']
+history    = data.get('history', [])
+sources    = data.get('sources', [])
 
 advisory_sites = {a['display_name'] for a in advisories}
 
@@ -339,17 +343,97 @@ for i, site in enumerate(filtered_sites):
     with cols[i % 4]:
         st.markdown(site_card(site, reading, avg, is_adv), unsafe_allow_html=True)
 
-# ── Quick navigation hint ─────────────────────────────────────────────────────
+# ── Detail sections ───────────────────────────────────────────────────────────
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.markdown("""
-<div style='background:#111827;border:1px solid #1f2d44;border-radius:10px;padding:14px 20px;
-            display:flex;gap:24px;align-items:center;flex-wrap:wrap'>
-  <span style='color:#64748b;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.6px'>Explore →</span>
-  <span style='color:#38bdf8;font-size:13px'>📊 Trends — per-site history & trailing averages</span>
-  <span style='color:#38bdf8;font-size:13px'>⚠️ Advisories — full advisory log</span>
-  <span style='color:#38bdf8;font-size:13px'>🔬 Sources — data provenance & collection log</span>
-</div>""", unsafe_allow_html=True)
+
+tab_trends, tab_advisories, tab_sources = st.tabs([
+    "📊 Trends",
+    "⚠️ Advisories",
+    "🔬 Sources"
+])
+
+with tab_trends:
+    st.markdown("#### Per-site history & trailing averages")
+    if history:
+        import pandas as pd
+        import plotly.express as px
+
+        hdf = pd.DataFrame(history)
+        hdf["sample_date"] = pd.to_datetime(hdf["sample_date"], errors="coerce")
+        hdf["value"] = pd.to_numeric(hdf["value"], errors="coerce")
+
+        trend_sites = sorted([x for x in hdf["display_name"].dropna().unique()])
+        selected_sites = st.multiselect(
+            "Sites",
+            trend_sites,
+            default=trend_sites[: min(5, len(trend_sites))]
+        )
+
+        filtered_hdf = hdf[hdf["display_name"].isin(selected_sites)] if selected_sites else hdf.head(0)
+
+        if not filtered_hdf.empty:
+            fig = px.line(
+                filtered_hdf.sort_values("sample_date"),
+                x="sample_date",
+                y="value",
+                color="display_name",
+                markers=True,
+                hover_data=["unit", "result_class", "source_name"]
+            )
+            fig.update_layout(
+                height=420,
+                margin=dict(l=10, r=10, t=20, b=10),
+                paper_bgcolor="#0b1120",
+                plot_bgcolor="#0b1120",
+                font_color="#e5e7eb",
+                legend_title_text=""
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        show_cols = [c for c in [
+            "sample_date", "display_name", "value", "unit", "result_class",
+            "source_name", "metric", "collected_at"
+        ] if c in hdf.columns]
+        st.dataframe(
+            hdf.sort_values("sample_date", ascending=False)[show_cols],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No historical readings available yet.")
+
+with tab_advisories:
+    st.markdown("#### Full advisory log")
+    if advisories:
+        import pandas as pd
+        adf = pd.DataFrame(advisories)
+        show_cols = [c for c in [
+            "issued_date", "display_name", "advisory_type",
+            "description", "source_name", "is_active", "collected_at"
+        ] if c in adf.columns]
+        st.dataframe(adf[show_cols], use_container_width=True, hide_index=True)
+    else:
+        st.info("No advisories available.")
+
+with tab_sources:
+    st.markdown("#### Data provenance & collection log")
+    if sources:
+        import pandas as pd
+        sdf = pd.DataFrame(sources)
+        st.dataframe(sdf, use_container_width=True, hide_index=True)
+
+    if last_runs:
+        import pandas as pd
+        rdf = pd.DataFrame(last_runs)
+        show_cols = [c for c in [
+            "started_at", "completed_at", "source_name", "status",
+            "records_added", "error_msg", "collector_version"
+        ] if c in rdf.columns]
+        st.markdown("#### Recent collection runs")
+        st.dataframe(rdf[show_cols], use_container_width=True, hide_index=True)
+    else:
+        st.info("No collection runs available.")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 
